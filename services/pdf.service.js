@@ -244,7 +244,7 @@ class PDFService {
     const isDev = process.env.NODE_ENV !== "production";
 
     const launchOptions = {
-      headless: true,
+      headless: "new",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -278,17 +278,34 @@ class PDFService {
 
     // In production (Render), use @sparticuz/chromium
     if (!isDev) {
-      launchOptions.executablePath = await chromium.executablePath();
-      launchOptions.args = chromium.args.concat(launchOptions.args);
-      launchOptions.headless = chromium.headless;
+      try {
+        console.log("Production mode: Using @sparticuz/chromium");
+        const executablePath = await chromium.executablePath();
+        if (executablePath) {
+          launchOptions.executablePath = executablePath;
+          launchOptions.args = chromium.args.concat(launchOptions.args);
+          launchOptions.headless = chromium.headless;
+          console.log("Chromium executable path set:", executablePath);
+        } else {
+          console.warn("Chromium executablePath is empty, attempting fallback");
+          // Fallback for environments where chromium.executablePath() returns empty
+          launchOptions.args = chromium.args.concat(launchOptions.args);
+        }
+      } catch (error) {
+        console.error("Error getting chromium executable path:", error.message);
+        throw new Error(`Failed to initialize chromium in production: ${error.message}`);
+      }
     } else {
       // Local dev: fallback to system Chrome
+      console.log("Development mode: Using system Chrome");
       const fs = require("fs");
       const paths = [
         "/usr/bin/google-chrome-stable",
         "/usr/bin/google-chrome",
         "/usr/bin/chromium-browser",
         "/usr/bin/chromium",
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
       ];
 
       const execPath = paths.find((p) => {
@@ -301,8 +318,17 @@ class PDFService {
 
       if (execPath) {
         launchOptions.executablePath = execPath;
+        console.log("System chrome found at:", execPath);
+      } else {
+        console.warn("No system chrome found, will rely on default Chromium");
       }
     }
+
+    console.log("Launching browser with options:", {
+      headless: launchOptions.headless,
+      hasExecPath: !!launchOptions.executablePath,
+      execPath: launchOptions.executablePath || "using default",
+    });
 
     return await puppeteer.launch(launchOptions);
   }

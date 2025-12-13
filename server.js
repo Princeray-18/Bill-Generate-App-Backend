@@ -4,6 +4,20 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 
+// Verify environment variables at startup
+console.log("=== ENVIRONMENT VERIFICATION ===");
+console.log("NODE_ENV:", process.env.NODE_ENV || "NOT SET (defaulting to undefined)");
+console.log("PUPPETEER_SKIP_CHROMIUM_DOWNLOAD:", process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD || "NOT SET");
+console.log("PORT:", process.env.PORT || 5000);
+console.log("MONGODB_URI:", process.env.MONGODB_URI ? "SET" : "NOT SET");
+console.log("================================");
+
+// Warn if NODE_ENV is not set to production in deployed environment
+if (process.env.NODE_ENV !== "production" && process.env.HOME === "/home/render") {
+  console.warn("⚠️ WARNING: NODE_ENV is not set to 'production' on Render!");
+  console.warn("⚠️ This will cause PDF generation to fail. Please set NODE_ENV=production in Render environment variables.");
+}
+
 const billRoutes = require("./routes/billRoutes");
 const bankRoutes = require("./routes/bank.routes");
 const companyRoutes = require("./routes/company.routes");
