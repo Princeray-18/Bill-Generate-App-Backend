@@ -4,18 +4,22 @@
 
 The application was failing with the error: `An 'executablePath' or 'channel' must be specified for 'puppeteer-core'`
 
-This error occurs when deploying on Render because:
-1. Puppeteer-core requires an explicit path to a Chromium executable
-2. Render doesn't include Chromium by default
-3. The `@sparticuz/chromium` package (already in `package.json`) provides a pre-built Chromium binary for Render
+### Root Cause
+- **puppeteer-core** alone doesn't include Chromium binaries
+- Render doesn't have a pre-installed Chromium browser
+- Missing or improperly configured executable path
 
-## Critical Configuration Steps for Render
+### Solution Implemented
+Added dual-mode PDF generation that automatically uses the best available option:
+
+1. **Prefers full `puppeteer` package** - Includes built-in Chromium (simplest solution)
+2. **Falls back to `puppeteer-core` + `@sparticuz/chromium`** - For custom environments
+
+## Critical Configuration for Render
 
 ### 1. **Environment Variables** (MUST BE SET in Render Dashboard)
 
-Set these environment variables in your Render service settings:
-
-```
+```bash
 NODE_ENV=production
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 MONGODB_URI=<your-mongodb-uri>
@@ -30,130 +34,205 @@ COMPANY_PREFIX_INV=INGINV
 YEAR_RANGE=25-26
 ```
 
-**⚠️ CRITICAL**: `NODE_ENV=production` MUST be set, or PDF generation will fail!
+**⚠️ CRITICAL**: `NODE_ENV=production` MUST be set!
 
-### 2. **Package.json Dependencies Verification**
+### 2. **Updated Dependencies**
 
-Ensure your `package.json` has these dependencies:
-
+Both packages are now installed:
 ```json
 {
   "dependencies": {
-    "@sparticuz/chromium": "^140.0.0",
-    "puppeteer-core": "^24.22.3",
-    "cloudinary": "^2.7.0",
-    "mongoose": "^7.8.7",
-    ...other dependencies
+    "puppeteer": "^22.12.1",           // NEW: Full puppeteer with built-in Chromium
+    "puppeteer-core": "^24.22.3",      // Fallback
+    "@sparticuz/chromium": "^140.0.0", // Fallback for puppeteer-core
+    ...
   }
 }
 ```
 
-Both `puppeteer-core` and `@sparticuz/chromium` are required.
-
 ### 3. **Build Configuration**
 
-Render should use these settings:
+Render settings:
 - **Build Command**: `npm install`
-- **Start Command**: `npm start` (which runs `node server.js`)
+- **Start Command**: `npm start` (runs `node server.js`)
+- **Instance Plan**: Standard or higher (Free won't work)
 
-### 4. **How the Fix Works**
+## How It Works Now
 
-The PDF service now:
+The PDF service automatically detects which configuration to use:
 
-1. **Checks NODE_ENV at startup** - Verifies production mode is active
-2. **Uses @sparticuz/chromium on production** - Automatically finds the pre-built Chromium binary
-3. **Falls back gracefully** - If issues occur, provides detailed error messages
-4. **Uses system Chrome on development** - For local testing
-
-Updated code in `services/pdf.service.js`:
 ```javascript
-if (!isDev) {
-  // Production (Render): Use @sparticuz/chromium
-  const executablePath = await chromium.executablePath();
-  launchOptions.executablePath = executablePath;
-  launchOptions.args = chromium.args.concat(launchOptions.args);
-} else {
-  // Development: Use system Chrome
-  launchOptions.executablePath = // system path to Chrome
+// Try full puppeteer first (recommended)
+try {
+  puppeteer = require("puppeteer");
+  console.log("✅ Using full puppeteer package (includes chromium)");
+} catch (e) {
+  // Fallback to puppeteer-core + @sparticuz/chromium
+  puppeteer = require("puppeteer-core");
+  chromium = require("@sparticuz/chromium");
 }
+```
+
+### Startup Messages (in Render Logs)
+
+**Success with full puppeteer:**
+```
+✅ Using full puppeteer package (includes chromium)
+✅ Using built-in puppeteer chromium (recommended)
+✅ Browser launched successfully
+```
+
+**Success with fallback:**
+```
+✅ Using puppeteer-core with @sparticuz/chromium
+✅ Chromium executable path set: /path/to/chromium
+✅ Browser launched successfully
+```
+
+## Deployment Steps
+
+### 1. Install Dependencies Locally
+```bash
+npm install
+```
+
+This should add `puppeteer` package to your `package-lock.json`.
+
+### 2. Commit Changes
+```bash
+git add package.json package-lock.json services/pdf.service.js
+git commit -m "Fix: Add dual-mode PDF generation with puppeteer fallback"
+git push origin main
+```
+
+### 3. Deploy to Render
+
+Option A: **Automatic** (if connected to GitHub)
+- Push triggers automatic deploy
+- Monitor in Render Dashboard → Deploys
+
+Option B: **Manual**
+- Render Dashboard → your service
+- Settings → Manual Deploy
+
+### 4. Monitor Logs
+
+Go to Render Dashboard → Logs and look for:
+```
+✅ Using full puppeteer package (includes chromium)
+✅ Browser launched successfully
+✅ Billing Software Backend is live!
 ```
 
 ## Troubleshooting
 
 ### Still Getting "executablePath" Error?
 
-1. **Check Render Logs**: Go to your Render service → Logs
-   - Look for the startup message: `NODE_ENV: production`
-   - Look for: `Chromium executable path set: /path/to/chromium`
+1. **Check Logs**:
+   - Should show: `Using full puppeteer package` OR `Chromium executable path set`
+   - If not, dependencies not installed properly
 
-2. **Verify Environment Variables**:
-   ```bash
-   # In Render logs, you should see:
-   === ENVIRONMENT VERIFICATION ===
-   NODE_ENV: production
-   PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: true
-   ```
+2. **Verify Build**:
+   - Render Logs should show: `npm install` completing successfully
+   - Check that `puppeteer` is listed in output
 
-3. **Restart the Service**: 
-   - Go to Render Dashboard
-   - Service Settings → Manual Deploy or restart the service
+3. **Restart Service**:
+   - Render Dashboard → your service
+   - Click "Manual Deploy" to rebuild
 
-4. **Check Package Installation**:
-   - Verify `@sparticuz/chromium` is installed: appears in `package-lock.json`
-   - Render should show it being installed during the build
+4. **Clear Cache**:
+   - If still failing, try: `npm ci` (clean install) instead of `npm install`
 
 ### PDF Generation Timeout?
 
-The service has timeouts set to:
+Timeouts configured to:
 - Protocol Timeout: 180 seconds
 - Puppeteer Timeout: 90 seconds
 
-If still timing out:
-1. Increase `protocolTimeout` in `services/pdf.service.js` → `_createBrowser()`
-2. Ensure Render instance has adequate RAM (use at least Standard plan)
+If timing out on Render:
+1. Upgrade to **Standard** or **Pro** plan (Free plan has limited resources)
+2. Check `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true` is set
+3. Increase timeouts in `services/pdf.service.js` → `_createBrowser()`
+
+### Memory Issues?
+
+Symptoms: Browser crashes, "heap out of memory"
+
+Solutions:
+1. Use Standard plan or higher on Render
+2. Limit concurrent PDF operations (already set to 2 in code)
+3. Increase Node.js memory: Add to server startup:
+   ```bash
+   NODE_OPTIONS="--max-old-space-size=1024" npm start
+   ```
 
 ## Local Development Testing
 
-To test locally before deploying:
-
+### Test with Full Puppeteer
 ```bash
-# Set environment to simulate production
-NODE_ENV=production npm start
+npm install  # Installs puppeteer
+npm start    # Server starts
 ```
 
-Then make API calls to test PDF generation.
+### Test Production Setup
+```bash
+NODE_ENV=production npm start
+npm run test-pdf  # Tests PDF generation
+```
 
-## Deployed File Changes
+### Debug Browser Launch
+```javascript
+// In pdf.service.js _createBrowser(), check logs for:
+// ✅ Using full puppeteer package (includes chromium)
+// ✅ Using built-in puppeteer chromium (recommended)
+// ✅ Browser launched successfully
+```
 
-The following files were modified for this fix:
+## File Changes Made
 
-1. **services/pdf.service.js**
-   - Enhanced `_createBrowser()` with better error handling
-   - Added detailed logging for debugging
-   - Improved production vs development detection
+1. **package.json**
+   - Added `"puppeteer": "^22.12.1"` to dependencies
+   - Now installs full puppeteer by default
 
-2. **server.js**
-   - Added environment variable verification on startup
-   - Added warnings if NODE_ENV is not properly configured
+2. **services/pdf.service.js**
+   - Enhanced `_createBrowser()` with dual-mode support
+   - Better error logging for debugging
+   - Fallback chain: puppeteer → puppeteer-core + @sparticuz/chromium
+
+3. **server.js**
+   - Environment verification on startup
+   - Warnings if configured incorrectly
+
+## Performance Notes
+
+- **Full puppeteer**: Larger download (~150MB), no runtime overhead
+- **Puppeteer-core + chromium**: Smaller download, runtime path discovery
+
+Both approaches work equally well once deployed.
 
 ## Next Steps
 
-1. Set `NODE_ENV=production` in Render environment variables
-2. Ensure `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true` is set
-3. Deploy or manually trigger a build
-4. Check Render logs for successful startup messages
-5. Test PDF generation via your API
-
-## Additional Resources
-
-- [@sparticuz/chromium Package](https://www.npmjs.com/package/@sparticuz/chromium)
-- [Puppeteer-Core Documentation](https://pptr.dev/)
-- [Render Documentation](https://render.com/docs)
+1. Run `npm install` locally to test
+2. Deploy code to Render
+3. Check logs for success messages
+4. Test PDF generation: `POST /api/bills`
 
 ## Support
 
-If PDF generation still fails after following this guide:
-1. Check the complete error message in Render logs
-2. Verify all environment variables are set
-3. Ensure the build includes the `node_modules` directory with `@sparticuz/chromium`
-4. Consider increasing the Render instance plan if memory is limited
+**If PDF still fails:**
+1. Check exact error in Render Logs
+2. Verify `NODE_ENV=production` (most common issue)
+3. Ensure `puppeteer` appears in `node_modules` during build
+4. Try manual deploy/restart in Render Dashboard
+5. Check that service plan is Standard or higher
+
+**Helpful logs to check:**
+- `npm install` output in build logs
+- First 50 lines of app startup in runtime logs
+- Error messages contain stack traces
+
+---
+
+**Last Updated**: December 2025
+**Working Solution**: Full puppeteer + puppeteer-core fallback
+

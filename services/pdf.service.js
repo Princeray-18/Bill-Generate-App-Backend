@@ -1,8 +1,19 @@
-const puppeteer = require("puppeteer-core");
+let puppeteer;
+let chromium;
+
+// Try to use full puppeteer package if available, otherwise use puppeteer-core
+try {
+  puppeteer = require("puppeteer");
+  console.log("✅ Using full puppeteer package (includes chromium)");
+} catch (e) {
+  puppeteer = require("puppeteer-core");
+  chromium = require("@sparticuz/chromium");
+  console.log("✅ Using puppeteer-core with @sparticuz/chromium");
+}
+
 const axios = require("axios");
 const path = require("path");
 const fs = require("fs");
-const chromium = require("@sparticuz/chromium");
 class PDFService {
   constructor() {
     this.browser = null;
@@ -239,9 +250,17 @@ class PDFService {
   }
 
   async _createBrowser() {
-    console.log("Creating new browser instance...");
+    console.log("🔧 Creating new browser instance...");
     const isWindows = process.platform === "win32";
     const isDev = process.env.NODE_ENV !== "production";
+    const usingFullPuppeteer = puppeteer.executablePath !== undefined;
+
+    console.log("📊 Browser initialization config:", {
+      isDev,
+      usingFullPuppeteer,
+      platform: process.platform,
+      nodeEnv: process.env.NODE_ENV,
+    });
 
     const launchOptions = {
       headless: "new",
@@ -276,24 +295,71 @@ class PDFService {
       ...(isWindows && { pipe: true, dumpio: false }),
     };
 
-    // In production (Render), use @sparticuz/chromium
+    // In production (Render), use appropriate chromium configuration
     if (!isDev) {
-      try {
-        console.log("Production mode: Using @sparticuz/chromium");
-        const executablePath = await chromium.executablePath();
-        if (executablePath) {
-          launchOptions.executablePath = executablePath;
-          launchOptions.args = chromium.args.concat(launchOptions.args);
-          launchOptions.headless = chromium.headless;
-          console.log("Chromium executable path set:", executablePath);
-        } else {
-          console.warn("Chromium executablePath is empty, attempting fallback");
-          // Fallback for environments where chromium.executablePath() returns empty
-          launchOptions.args = chromium.args.concat(launchOptions.args);
+      if (usingFullPuppeteer) {
+        // If using full puppeteer, it has chromium built-in
+        console.log("✅ Using built-in puppeteer chromium (recommended)");
+        // No executablePath needed, puppeteer handles it
+      } else {
+        // Using puppeteer-core, need @sparticuz/chromium
+        try {
+          console.log("🔧 Production mode: Configuring @sparticuz/chromium");
+          console.log("📝 Node environment:", {
+            isLinux: process.platform === "linux",
+            homeDir: process.env.HOME,
+            nodeEnv: process.env.NODE_ENV,
+          });
+
+          // Try to get executable path (handle both sync and async)
+          let executablePath;
+          try {
+            // Try async first
+            executablePath = await chromium.executablePath();
+            console.log("✅ chromium.executablePath() (async):", executablePath);
+          } catch (e) {
+            // Try sync fallback
+            try {
+              executablePath = chromium.executablePath?.();
+              console.log("✅ chromium.executablePath() (sync):", executablePath);
+            } catch (e2) {
+              console.warn("⚠️ chromium.executablePath() methods failed:", e.message, e2.message);
+            }
+          }
+
+          console.log("📊 Chromium path result:", {
+            executablePath,
+            isEmpty: !executablePath || !executablePath.trim(),
+          });
+
+          if (executablePath && executablePath.trim()) {
+            launchOptions.executablePath = executablePath;
+            console.log("✅ Chromium executable path set:", executablePath);
+          } else {
+            console.warn("⚠️ Chromium executablePath is empty - attempting fallback");
+            // Try alternative path detection
+            if (chromium.executablePath) {
+              launchOptions.executablePath = chromium.executablePath;
+              console.log("✅ Using chromium.executablePath directly:", chromium.executablePath);
+            }
+          }
+
+          // Always merge chromium args for production
+          if (chromium.args && Array.isArray(chromium.args)) {
+            launchOptions.args = chromium.args.concat(launchOptions.args);
+            console.log("✅ Added chromium args:", chromium.args.length, "args merged");
+          }
+
+          // Set headless mode from chromium config
+          if (chromium.headless !== undefined) {
+            launchOptions.headless = chromium.headless;
+            console.log("✅ Headless mode set from chromium:", chromium.headless);
+          }
+        } catch (error) {
+          console.error("❌ Error configuring chromium:", error.message);
+          console.error("🔍 Full error:", error);
+          throw new Error(`Failed to initialize chromium in production: ${error.message}`);
         }
-      } catch (error) {
-        console.error("Error getting chromium executable path:", error.message);
-        throw new Error(`Failed to initialize chromium in production: ${error.message}`);
       }
     } else {
       // Local dev: fallback to system Chrome
@@ -318,19 +384,38 @@ class PDFService {
 
       if (execPath) {
         launchOptions.executablePath = execPath;
-        console.log("System chrome found at:", execPath);
+        console.log("✅ System chrome found at:", execPath);
       } else {
-        console.warn("No system chrome found, will rely on default Chromium");
+        console.warn("⚠️ No system chrome found, will rely on default Chromium");
       }
     }
 
-    console.log("Launching browser with options:", {
+    console.log("📋 Launching browser with options:", {
       headless: launchOptions.headless,
       hasExecPath: !!launchOptions.executablePath,
       execPath: launchOptions.executablePath || "using default",
+      isDev: isDev,
+      platform: process.platform,
     });
 
-    return await puppeteer.launch(launchOptions);
+    // Validate configuration before launch
+    if (!isDev && !launchOptions.executablePath) {
+      console.warn("⚠️ WARNING: Production mode but no executablePath found!");
+      console.warn("⚠️ This may cause 'executablePath must be specified' error");
+    }
+
+    try {
+      const browser = await puppeteer.launch(launchOptions);
+      console.log("✅ Browser launched successfully");
+      return browser;
+    } catch (error) {
+      console.error("❌ Failed to launch browser:", error.message);
+      if (!launchOptions.executablePath && !isDev) {
+        console.error("❌ CRITICAL: Production mode requires executablePath!");
+        console.error("❌ Ensure @sparticuz/chromium is installed and NODE_ENV=production");
+      }
+      throw error;
+    }
   }
 
   async initBrowser() {
