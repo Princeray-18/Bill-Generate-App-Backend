@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "node -e \"try { require('@sparticuz/chromium'); console.log('✅ @sparticuz/chromium verified'); } catch(e) { console.error('❌ @sparticuz/chromium not available'); }\""
   },
   "keywords": [],
   "author": "",

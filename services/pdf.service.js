@@ -3,7 +3,7 @@ let chromium;
 
 // Determine which puppeteer to use based on environment
 const isDev = !process.env.NODE_ENV || process.env.NODE_ENV !== 'production';
-const onRender = process.env.HOME === '/home/render';
+const onRender = process.env.HOME === '/home/render' || process.env.RENDER === 'true';
 
 if (isDev && !onRender) {
   // Local development: try full puppeteer first, fallback to puppeteer-core

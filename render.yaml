@@ -5,13 +5,17 @@ services:
     plan: standard # Use at least standard plan for PDF generation
     
     # Build configuration
-    buildCommand: npm ci
+    buildCommand: npm ci && npm run postinstall
     startCommand: npm start
     
     # Environment variables for Render
     envVars:
       - key: NODE_ENV
         value: production
+        scope: run,build
+      
+      - key: RENDER
+        value: "true"
         scope: run,build
       
       - key: PORT
