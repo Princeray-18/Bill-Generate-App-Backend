@@ -5,7 +5,7 @@ services:
     plan: standard # Use at least standard plan for PDF generation
     
     # Build configuration
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: npm start
     
     # Environment variables for Render
