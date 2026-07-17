@@ -25,7 +25,7 @@ const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-// Security middleware
+// Security middlewaref
 
 // Rate limiting
 const limiter = rateLimit({
@@ -125,30 +125,70 @@ app.use((req, res) => {
 // Error handling middleware
 app.use(errorHandler);
 
-// Connect to MongoDB
+// Connect to MongoDB (non-blocking - server starts even if DB unavailable)
+let mongoConnected = false;
+
 mongoose
   .connect(process.env.MONGODB_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
   })
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
+  .then(() => {
+    mongoConnected = true;
+    console.log("✅ Connected to MongoDB");
+  })
+  .catch((err) => {
+    console.error("❌ MongoDB connection error:", err.message);
+    console.log("⚠️  Server starting WITHOUT MongoDB. Database features will be unavailable.");
+    console.log("💡 Fix: Update MONGODB_URI in .env or ensure MongoDB is running");
+  });
 
+// Attempt to reconnect periodically if connection fails
+mongoose.connection.on('disconnected', () => {
+  mongoConnected = false;
+  console.log("⚠️  MongoDB disconnected");
+});
+
+mongoose.connection.on('reconnected', () => {
+  mongoConnected = true;
+  console.log("✅ MongoDB reconnected");
+});
+
+// const PORT = process.env.PORT || 5000;
+
+// app.listen(PORT, () => {
+//   console.log(`🚀 Server running on port ${PORT}`);
+//   if (!mongoConnected) {
+//     console.log("⚠️  WARNING: Server started without MongoDB connection");
+//   }
+// });
+
+// // Graceful shutdown
+// process.on("SIGTERM", async () => {
+//   console.log("SIGTERM received, shutting down gracefully");
+//   await mongoose.connection.close();
+//   process.exit(0);
+// });
+
+// process.on("SIGINT", async () => {
+//   console.log("SIGINT received, shutting down gracefully");
+//   await mongoose.connection.close();
+//   process.exit(0);
+// });
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(() => {
+    console.log("✅ Connected to MongoDB");
 
-// Graceful shutdown
-process.on("SIGTERM", async () => {
-  console.log("SIGTERM received, shutting down gracefully");
-  await mongoose.connection.close();
-  process.exit(0);
-});
-
-process.on("SIGINT", async () => {
-  console.log("SIGINT received, shutting down gracefully");
-  await mongoose.connection.close();
-  process.exit(0);
-});
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("❌ MongoDB connection error:", err.message);
+    process.exit(1);
+  });
